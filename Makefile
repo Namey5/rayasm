@@ -1,6 +1,6 @@
 BUILD_DIR=build
 ASFLAGS=
-LDFLAGS=
+LDFLAGS=`pkg-config --libs raylib`
 ARGS=
 
 .PHONY: all clean run
