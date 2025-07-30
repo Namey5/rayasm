@@ -3,11 +3,15 @@
 .section .rodata
 
 .align 16
-.half:
+.f32_half:
     .float 0.5, 0.5, 0.5, 0.5
+.f32_one:
+    .float 1.0, 1.0, 1.0, 1.0
 
 .FLAG_WINDOW_RESIZABLE:
     .int 0x00000004
+.CAMERA_ORBITAL:
+    .int 2
 
 .print_launch_args_1:
     .string "Running with %d arg(s):\n"
@@ -36,6 +40,31 @@
     .string "Hello there!"
 .message_color:
     .byte 240, 240, 240, 255
+
+.align 4
+.camera:
+    .camera.position:
+        .float -10.0, 10.0, 10.0
+    .camera.target:
+        .float 0.0, 0.0, 0.0
+    .camera.up:
+        .float 0.0, 1.0, 0.0
+    .camera.fovy:
+        .float 45.0
+    .camera.projection:
+        /* PERSPECTIVE = 0, ORTHOGRAPHIC = 1 */
+        .int 0
+
+.align 4
+.cube:
+    .cube.position:
+        .float 0.0, 0.0, 0.0
+    .cube.size:
+        .float 2.0, 2.0, 4.0
+    .cube.color:
+        .byte 255, 0, 0, 255
+    .cube.outline:
+        .byte 25, 25, 25, 255
 
 .section .text
 
@@ -97,18 +126,63 @@ init_window:
         test eax, eax
         jnz close_window
 
+    update_world:
         /* Keep our cached window size up to date each frame. */
         call GetScreenWidth
         mov DWORD PTR .window_size[rip], eax
         call GetScreenHeight
         mov DWORD PTR .window_size[rip+4], eax
 
+        /* void UpdateCamera(Camera* camera, int mode) */
+        lea rdi, .camera[rip]
+        mov esi, DWORD PTR .CAMERA_ORBITAL[rip]
+        call UpdateCamera
+
+    render_world:
         call BeginDrawing
 
         /* void ClearBackground(Color color) */
         mov edi, DWORD PTR .clear_color[rip]
         call ClearBackground
 
+    render_3d:
+        /* void BeginMode3D(Camera3D camera) */
+        /*
+         * Camera3D is 44 bytes, but stack needs to be aligned to 16 bytes;
+         * allows us to just copy 6 qwords because we don't care about trashing the last dword.
+         */
+        sub rsp, 48
+        lea rdi, QWORD PTR [rsp]
+        lea rsi, .camera[rip]
+        mov ecx, 6
+        rep movsq
+        call BeginMode3D
+        add rsp, 48
+
+        /* void DrawCubeV(Vector3 position, Vector3 size, Color color) */
+        /* Vector3's get destructured, filling first qword of each fp register until end of struct. */
+        movq xmm0, QWORD PTR .cube.position[rip]
+        movd xmm1, DWORD PTR .cube.position[rip+8]
+        movq xmm2, QWORD PTR .cube.size[rip]
+        movd xmm3, DWORD PTR .cube.size[rip+8]
+        mov edi, DWORD PTR .cube.color[rip]
+        call DrawCubeV
+        /* void DrawCubeWiresV(Vector3 position, Vector3 size, Color color) */
+        movq xmm0, QWORD PTR .cube.position[rip]
+        movd xmm1, DWORD PTR .cube.position[rip+8]
+        movq xmm2, QWORD PTR .cube.size[rip]
+        movd xmm3, DWORD PTR .cube.size[rip+8]
+        mov edi, DWORD PTR .cube.outline[rip]
+        call DrawCubeWiresV
+
+        /* void DrawGrid3D(int slices, float spacing) */
+        mov edi, 10
+        movd xmm0, DWORD PTR .f32_one[rip]
+        call DrawGrid
+
+        call EndMode3D
+
+    render_ui:
         /*
          * This one is awkward for a number of reasons:
          *  - font is 48 bytes and passed by value, so need to push onto stack
@@ -132,7 +206,7 @@ init_window:
         movq xmm1, QWORD PTR .window_size[rip]
         cvtdq2ps xmm1, xmm1
         subps xmm1, xmm0
-        mulps xmm1, XMMWORD PTR .half[rip]
+        mulps xmm1, XMMWORD PTR .f32_half[rip]
         /* Convert position back to int[2] and unpack into [esi, edx]. */
         cvtps2dq xmm1, xmm1
         movq rsi, xmm1
